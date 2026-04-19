@@ -36,11 +36,11 @@ Uma plataforma moderna e gratuita para baixar vídeos de redes sociais sem marca
 1. **Crie uma instância EC2** (Amazon Linux 2023)
 2. **Execute o script de setup**:
 ```bash
-curl -s https://raw.githubusercontent.com/seu-usuario/baixar-media-player/main/deploy/setup-amazon-linux.sh | bash
+curl -s https://raw.githubusercontent.com/pronatan/baixar-media-player/main/deploy/setup-amazon-linux.sh | bash
 ```
 3. **Faça upload dos arquivos**:
 ```bash
-git clone https://github.com/seu-usuario/baixar-media-player.git
+git clone https://github.com/pronatan/baixar-media-player.git
 cd baixar-media-player
 ./deploy/upload-files.sh SEU_IP_EC2 sua-chave.pem
 ```
@@ -49,7 +49,7 @@ cd baixar-media-player
 
 1. **Clone o repositório**:
 ```bash
-git clone https://github.com/seu-usuario/baixar-media-player.git
+git clone https://github.com/pronatan/baixar-media-player.git
 cd baixar-media-player
 ```
 
@@ -109,13 +109,13 @@ define('PROXY_LIST', [
 2. **Execute o setup**:
 ```bash
 ssh -i sua-chave.pem ec2-user@SEU-IP
-curl -s https://raw.githubusercontent.com/seu-usuario/baixar-media-player/main/deploy/setup-amazon-linux.sh | bash
+curl -s https://raw.githubusercontent.com/pronatan/baixar-media-player/main/deploy/setup-amazon-linux.sh | bash
 ```
 
 3. **Faça upload dos arquivos**:
 ```bash
 # No seu computador local
-git clone https://github.com/seu-usuario/baixar-media-player.git
+git clone https://github.com/pronatan/baixar-media-player.git
 cd baixar-media-player
 scp -i sua-chave.pem -r index.php api.php assets ec2-user@SEU-IP:/var/www/baixarmediaplayer/
 ```
