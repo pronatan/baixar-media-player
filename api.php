@@ -8,6 +8,17 @@
 set_time_limit(0);
 ini_set('memory_limit', '256M');
 
+// Carrega variáveis do arquivo .env se existir
+$_envFile = __DIR__ . '/.env';
+if (is_file($_envFile)) {
+    foreach (file($_envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $_line) {
+        if (str_starts_with(trim($_line), '#') || !str_contains($_line, '=')) continue;
+        [$_k, $_v] = explode('=', $_line, 2);
+        $_k = trim($_k); $_v = trim($_v);
+        if ($_k && !getenv($_k)) putenv("$_k=$_v");
+    }
+}
+
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 
@@ -81,12 +92,17 @@ function fetchVideoInfo(): void
 
     $proxy = getProxy();
 
+
     // Chama yt-dlp para obter metadados em JSON
+    // No Linux/EC2: proc_open com arquivo temporário (sem limite de buffer)
+    // No Windows com php -S: exec normal (limitado, mas funcional para URLs simples)
     $cmd = buildCommand(array_filter([
         YTDLP_PATH,
         '--dump-json',
         '--no-playlist',
         '--no-warnings',
+        '--no-write-subs',
+        '--no-write-auto-subs',
         '--socket-timeout', '30',
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         '--add-header', 'Accept-Language:pt-BR,pt;q=0.9,en;q=0.8',
@@ -98,14 +114,33 @@ function fetchVideoInfo(): void
         $url,
     ]));
 
-    $output = [];
-    $exitCode = 0;
-    exec($cmd . ' 2>&1', $output, $exitCode);
-
-    $json = implode('', $output);
+    if (PHP_OS_FAMILY !== 'Windows') {
+        // Linux: proc_open com arquivo temporário — sem limite de buffer
+        $tmpFile = tempnam(sys_get_temp_dir(), 'ytdlp_');
+        $tmpErr  = tempnam(sys_get_temp_dir(), 'ytdlp_err_');
+        $descriptors = [0 => ['pipe','r'], 1 => ['file', $tmpFile, 'w'], 2 => ['file', $tmpErr, 'w']];
+        $proc = proc_open($cmd, $descriptors, $pipes);
+        if (is_resource($proc)) {
+            fclose($pipes[0]);
+            $exitCode = proc_close($proc);
+        } else {
+            $exitCode = 1;
+        }
+        $json   = (string) file_get_contents($tmpFile);
+        $errOut = (string) file_get_contents($tmpErr);
+        @unlink($tmpFile);
+        @unlink($tmpErr);
+    } else {
+        // Windows: exec com array de output
+        $output = [];
+        $exitCode = 0;
+        exec($cmd . ' 2>&1', $output, $exitCode);
+        $json   = implode('', $output);
+        $errOut = '';
+    }
 
     if ($exitCode !== 0 || empty($json)) {
-        $errMsg = parseYtdlpError($json);
+        $errMsg = parseYtdlpError($errOut ?: $json);
         jsonError($errMsg, 500);
     }
 
