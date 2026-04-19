@@ -90,61 +90,70 @@ function fetchVideoInfo(): void
     // Sanitiza a URL — remove parâmetros de rastreamento desnecessários mas mantém o essencial
     $url = sanitizeUrl($url);
 
-    $proxy = getProxy();
+    // Monta lista de proxies para tentar: começa pelo índice rotativo e tenta todos
+    $proxyQueue = buildProxyQueue();
 
+    $json   = '';
+    $errOut = '';
+    $data   = null;
 
-    // Chama yt-dlp para obter metadados em JSON
-    // No Linux/EC2: proc_open com arquivo temporário (sem limite de buffer)
-    // No Windows com php -S: exec normal (limitado, mas funcional para URLs simples)
-    $cmd = buildCommand(array_filter([
-        YTDLP_PATH,
-        '--dump-json',
-        '--no-playlist',
-        '--no-warnings',
-        '--no-write-subs',
-        '--no-write-auto-subs',
-        '--socket-timeout', '30',
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        '--add-header', 'Accept-Language:pt-BR,pt;q=0.9,en;q=0.8',
-        $proxy       ? '--proxy'   : null,
-        $proxy       ?: null,
-        COOKIES_FILE ? '--cookies' : null,
-        COOKIES_FILE ?: null,
-        '--',
-        $url,
-    ]));
+    // Tenta cada proxy (ou sem proxy se lista vazia) até um funcionar
+    foreach ($proxyQueue as $proxy) {
+        $cmd = buildCommand(array_filter([
+            YTDLP_PATH,
+            '--dump-json',
+            '--no-playlist',
+            '--no-warnings',
+            '--no-write-subs',
+            '--no-write-auto-subs',
+            '--socket-timeout', '10',
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            '--add-header', 'Accept-Language:pt-BR,pt;q=0.9,en;q=0.8',
+            $proxy       ? '--proxy'   : null,
+            $proxy       ?: null,
+            COOKIES_FILE ? '--cookies' : null,
+            COOKIES_FILE ?: null,
+            '--',
+            $url,
+        ]));
 
-    if (PHP_OS_FAMILY !== 'Windows') {
-        // Linux: proc_open com arquivo temporário — sem limite de buffer
-        $tmpFile = tempnam(sys_get_temp_dir(), 'ytdlp_');
-        $tmpErr  = tempnam(sys_get_temp_dir(), 'ytdlp_err_');
-        $descriptors = [0 => ['pipe','r'], 1 => ['file', $tmpFile, 'w'], 2 => ['file', $tmpErr, 'w']];
-        $proc = proc_open($cmd, $descriptors, $pipes);
-        if (is_resource($proc)) {
-            fclose($pipes[0]);
-            $exitCode = proc_close($proc);
+        if (PHP_OS_FAMILY !== 'Windows') {
+            $tmpFile = tempnam(sys_get_temp_dir(), 'ytdlp_');
+            $tmpErr  = tempnam(sys_get_temp_dir(), 'ytdlp_err_');
+            $descriptors = [0 => ['pipe','r'], 1 => ['file', $tmpFile, 'w'], 2 => ['file', $tmpErr, 'w']];
+            $proc = proc_open($cmd, $descriptors, $pipes);
+            if (is_resource($proc)) {
+                fclose($pipes[0]);
+                $exitCode = proc_close($proc);
+            } else {
+                $exitCode = 1;
+            }
+            $json   = (string) file_get_contents($tmpFile);
+            $errOut = (string) file_get_contents($tmpErr);
+            @unlink($tmpFile);
+            @unlink($tmpErr);
         } else {
-            $exitCode = 1;
+            $output = [];
+            $exitCode = 0;
+            exec($cmd . ' 2>&1', $output, $exitCode);
+            $json   = implode('', $output);
+            $errOut = '';
         }
-        $json   = (string) file_get_contents($tmpFile);
-        $errOut = (string) file_get_contents($tmpErr);
-        @unlink($tmpFile);
-        @unlink($tmpErr);
-    } else {
-        // Windows: exec com array de output
-        $output = [];
-        $exitCode = 0;
-        exec($cmd . ' 2>&1', $output, $exitCode);
-        $json   = implode('', $output);
-        $errOut = '';
+
+        if ($exitCode === 0 && !empty($json)) {
+            $decoded = json_decode($json, true);
+            if ($decoded) {
+                $data = $decoded;
+                break; // sucesso — para de tentar
+            }
+        }
+        // falhou com este proxy, tenta o próximo
     }
 
-    if ($exitCode !== 0 || empty($json)) {
+    if (!$data) {
         $errMsg = parseYtdlpError($errOut ?: $json);
         jsonError($errMsg, 500);
     }
-
-    $data = json_decode($json, true);
 
     if (!$data) {
         jsonError('Não foi possível processar as informações do vídeo.', 500);
@@ -192,54 +201,62 @@ function downloadVideo(): void
     $filename = 'baixarmp' . uniqid() . 'player';
     $outputTemplate = DOWNLOAD_DIR . $filename . '.%(ext)s';
 
-    $proxy = getProxy();
+    $proxyQueue = buildProxyQueue();
+    $exitCode   = 1;
+    $output     = [];
 
-    $args = [
-        YTDLP_PATH,
-        '--no-playlist',
-        '--no-warnings',
-        '--socket-timeout', '60',
-        '--concurrent-fragments', (string) CONCURRENT_FRAGMENTS,
-        '--retries', '5',
-        '--fragment-retries', '5',
-        '--file-access-retries', '3',
-        '--http-chunk-size', '10M',
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        '--add-header', 'Accept-Language:pt-BR,pt;q=0.9,en;q=0.8',
-        '-o', $outputTemplate,
-    ];
+    foreach ($proxyQueue as $proxy) {
+        $args = [
+            YTDLP_PATH,
+            '--no-playlist',
+            '--no-warnings',
+            '--socket-timeout', '60',
+            '--concurrent-fragments', (string) CONCURRENT_FRAGMENTS,
+            '--retries', '3',
+            '--fragment-retries', '3',
+            '--file-access-retries', '3',
+            '--http-chunk-size', '10M',
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            '--add-header', 'Accept-Language:pt-BR,pt;q=0.9,en;q=0.8',
+            '-o', $outputTemplate,
+        ];
 
-    if ($proxy) {
-        $args = array_merge($args, ['--proxy', $proxy]);
-    }
-
-    if (COOKIES_FILE) {
-        $args = array_merge($args, ['--cookies', COOKIES_FILE]);
-    }
-
-    if ($type === 'audio') {
-        $args = array_merge($args, [
-            '-x',
-            '--audio-format', 'mp3',
-            '--audio-quality', '0',
-        ]);
-    } else {
-        if ($formatId === 'best') {
-            $args = array_merge($args, ['-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best']);
-        } else {
-            $args = array_merge($args, ['-f', $formatId]);
+        if ($proxy) {
+            $args = array_merge($args, ['--proxy', $proxy]);
         }
-        $args = array_merge($args, ['--merge-output-format', 'mp4']);
+
+        if (COOKIES_FILE) {
+            $args = array_merge($args, ['--cookies', COOKIES_FILE]);
+        }
+
+        if ($type === 'audio') {
+            $args = array_merge($args, [
+                '-x',
+                '--audio-format', 'mp3',
+                '--audio-quality', '0',
+            ]);
+        } else {
+            if ($formatId === 'best') {
+                $args = array_merge($args, ['-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best']);
+            } else {
+                $args = array_merge($args, ['-f', $formatId]);
+            }
+            $args = array_merge($args, ['--merge-output-format', 'mp4']);
+        }
+
+        $args[] = '--';
+        $args[] = $url;
+
+        $cmd    = buildCommand($args);
+        $output = [];
+        exec($cmd . ' 2>&1', $output, $exitCode);
+
+        if ($exitCode === 0) {
+            break; // download ok, para de tentar
+        }
+        // limpa arquivo parcial antes de tentar próximo proxy
+        foreach (glob(DOWNLOAD_DIR . $filename . '.*') as $f) @unlink($f);
     }
-
-    $args[] = '--';
-    $args[] = $url;
-
-    $cmd = buildCommand($args);
-
-    $output   = [];
-    $exitCode = 0;
-    exec($cmd . ' 2>&1', $output, $exitCode);
 
     if ($exitCode !== 0) {
         $errMsg = parseYtdlpError(implode("\n", $output));
@@ -299,7 +316,26 @@ function downloadVideo(): void
 // ─────────────────────────────────────────────
 
 /**
- * Retorna um proxy para usar — prioriza PROXY_URL, depois rotaciona a lista
+ * Retorna fila de proxies para tentar em ordem.
+ * Sempre começa pelo índice 0 (proxy principal) e percorre todos como fallback.
+ * A rotação só acontece quando há mais de 1 proxy disponível e todos estão saudáveis.
+ */
+function buildProxyQueue(): array
+{
+    if (PROXY_URL) {
+        return [PROXY_URL];
+    }
+    $list = PROXY_LIST;
+    if (empty($list)) {
+        return ['']; // sem proxy
+    }
+    // Retorna a lista na ordem original — proxy[0] é sempre o principal
+    // O loop de retry no chamador tenta cada um em sequência
+    return array_values($list);
+}
+
+/**
+ * @deprecated use buildProxyQueue() — mantido para compatibilidade
  */
 function getProxy(): string
 {
@@ -310,7 +346,6 @@ function getProxy(): string
     if (empty($list)) {
         return '';
     }
-    // Rotação baseada no segundo atual para distribuir carga
     return $list[time() % count($list)];
 }
 
