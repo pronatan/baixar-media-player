@@ -94,7 +94,6 @@ function renderResult(data) {
                 data-format="${escHtml(fmt.id)}"
                 data-type="${escHtml(fmt.type)}"
                 data-label="${escHtml(fmt.label)}"
-                ${data.selenium_file ? `data-selenium-file="${escHtml(data.selenium_file)}"` : ''}
                 onclick="startDownload(this)"
             >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
@@ -130,11 +129,10 @@ function renderResult(data) {
 
 // ─── Inicia o download ───
 async function startDownload(btn) {
-    const url        = btn.dataset.url;
-    const formatId   = btn.dataset.format;
-    const type       = btn.dataset.type;
-    const label      = btn.dataset.label;
-    const seleniumFile = btn.dataset.seleniumFile; // arquivo já baixado pelo Selenium
+    const url      = btn.dataset.url;
+    const formatId = btn.dataset.format;
+    const type     = btn.dataset.type;
+    const label    = btn.dataset.label;
 
     // Estado de carregamento no botão
     btn.disabled = true;
@@ -164,21 +162,10 @@ async function startDownload(btn) {
     animateProgressBar();
 
     try {
-        let fetchUrl, fetchBody;
-
-        if (seleniumFile) {
-            // Arquivo já baixado pelo Selenium — serve direto
-            fetchUrl  = `api.php?action=serve&file=${encodeURIComponent(seleniumFile)}`;
-            fetchBody = null;
-        } else {
-            fetchUrl  = 'api.php?action=download';
-            fetchBody = `url=${encodeURIComponent(url)}&format_id=${encodeURIComponent(formatId)}&type=${encodeURIComponent(type)}`;
-        }
-
-        const res = await fetch(fetchUrl, {
-            method: fetchBody ? 'POST' : 'GET',
-            headers: fetchBody ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {},
-            body: fetchBody || undefined,
+        const res = await fetch('api.php?action=download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `url=${encodeURIComponent(url)}&format_id=${encodeURIComponent(formatId)}&type=${encodeURIComponent(type)}`,
         });
 
         if (!res.ok) {

@@ -24,20 +24,15 @@ header('X-Content-Type-Options: nosniff');
 
 // Configurações
 define('YTDLP_PATH', getenv('YTDLP_PATH') ?: (PHP_OS_FAMILY === 'Windows' ? __DIR__ . '/yt-dlp.exe' : '/usr/local/bin/yt-dlp'));
-define('SELENIUM_PYTHON', '/opt/selenium-env/bin/python3');
-define('SELENIUM_SCRIPT', __DIR__ . '/instagram_selenium.py');
 define('DOWNLOAD_DIR', __DIR__ . '/downloads/');
 define('MAX_FILESIZE_MB', 500);
 define('CONCURRENT_FRAGMENTS', 16);
 define('BUFFER_SIZE', 1048576);
 
 // Proxy residencial — configure via variável de ambiente ou direto aqui
-// Formato: 'http://usuario:senha@host:porta' ou deixe vazio para sem proxy
 define('PROXY_URL', getenv('YTDLP_PROXY') ?: '');
 
-// Lista de proxies para rotação (se PROXY_URL estiver vazio, usa esta lista)
-// Configure via variável de ambiente YTDLP_PROXY_LIST como JSON:
-// ["http://user:pass@host:porta", ...]
+// Lista de proxies para rotação via variável de ambiente YTDLP_PROXY_LIST (JSON array)
 $_proxy_list_raw = getenv('YTDLP_PROXY_LIST');
 define('PROXY_LIST', $_proxy_list_raw ? json_decode($_proxy_list_raw, true) : []);
 
@@ -66,55 +61,8 @@ switch ($action) {
     case 'download':
         downloadVideo();
         break;
-    case 'serve':
-        serveSeleniumFile();
-        break;
     default:
         jsonError('Ação inválida.', 400);
-}
-
-// ─────────────────────────────────────────────
-// Serve arquivo já baixado pelo Selenium
-// ─────────────────────────────────────────────
-function serveSeleniumFile(): void
-{
-    $filename = basename(trim($_GET['file'] ?? ''));
-
-    // Valida: só alfanumérico + ponto + extensão segura
-    if (!preg_match('/^baixarmp[a-zA-Z0-9]+player\.(mp4|mp3|webm|m4a)$/', $filename)) {
-        jsonError('Arquivo inválido.', 400);
-    }
-
-    $filePath = DOWNLOAD_DIR . $filename;
-
-    if (!is_file($filePath)) {
-        jsonError('Arquivo não encontrado ou expirado.', 404);
-    }
-
-    $ext      = pathinfo($filePath, PATHINFO_EXTENSION);
-    $mimeType = getMimeType($ext);
-    $fileSize = filesize($filePath);
-
-    header('Content-Type: ' . $mimeType);
-    header('Content-Disposition: attachment; filename="' . $filename . '"');
-    header('Content-Length: ' . $fileSize);
-    header('Cache-Control: no-cache, no-store, must-revalidate');
-    header('Pragma: no-cache');
-    header('Expires: 0');
-
-    if (ob_get_level()) ob_end_clean();
-
-    $handle = fopen($filePath, 'rb');
-    if ($handle) {
-        while (!feof($handle)) {
-            echo fread($handle, BUFFER_SIZE);
-            flush();
-        }
-        fclose($handle);
-    }
-
-    unlink($filePath);
-    exit;
 }
 
 // ─────────────────────────────────────────────
@@ -136,17 +84,13 @@ function fetchVideoInfo(): void
         jsonError('Plataforma não suportada. Use TikTok, Instagram, Facebook, YouTube ou Twitter/X.', 422);
     }
 
-    // Sanitiza a URL — remove parâmetros de rastreamento desnecessários mas mantém o essencial
     $url = sanitizeUrl($url);
 
-    // Monta lista de proxies para tentar: começa pelo índice rotativo e tenta todos
     $proxyQueue = buildProxyQueue();
+    $json       = '';
+    $errOut     = '';
+    $data       = null;
 
-    $json   = '';
-    $errOut = '';
-    $data   = null;
-
-    // Tenta cada proxy (ou sem proxy se lista vazia) até um funcionar
     foreach ($proxyQueue as $proxy) {
         $cmd = buildCommand(array_filter([
             YTDLP_PATH,
@@ -193,58 +137,14 @@ function fetchVideoInfo(): void
             $decoded = json_decode($json, true);
             if ($decoded) {
                 $data = $decoded;
-                break; // sucesso — para de tentar
+                break;
             }
         }
-        // falhou com este proxy, tenta o próximo
     }
 
     if (!$data) {
-        $errMsg = parseYtdlpError($errOut ?: $json);
-
-        // Fallback Selenium para Instagram privado
-        if (
-            str_contains($url, 'instagram.com') &&
-            isLoginRequiredError($errOut ?: $json) &&
-            PHP_OS_FAMILY !== 'Windows' &&
-            is_file(SELENIUM_SCRIPT) &&
-            is_file(SELENIUM_PYTHON)
-        ) {
-            // Para fetch, o Selenium baixa o arquivo e retorna info básica
-            $seleniumResult = downloadViaSelenium($url);
-            if ($seleniumResult['success'] && !empty($seleniumResult['file'])) {
-                $filePath = $seleniumResult['file'];
-                $fileSize = filesize($filePath);
-                // Retorna info básica — o arquivo já está baixado
-                jsonSuccess([
-                    'title'     => 'Vídeo do Instagram (privado)',
-                    'thumbnail' => '',
-                    'duration'  => '',
-                    'platform'  => 'Instagram',
-                    'uploader'  => '',
-                    'formats'   => [[
-                        'id'       => 'selenium_direct',
-                        'label'    => 'Melhor qualidade disponível',
-                        'ext'      => 'mp4',
-                        'type'     => 'video',
-                        'quality'  => 'best',
-                        'filesize' => round($fileSize / 1048576, 1) . ' MB',
-                    ]],
-                    'url'       => $url,
-                    'selenium_file' => basename($filePath), // arquivo já baixado
-                ]);
-            }
-        }
-
-        jsonError($errMsg, 500);
+        jsonError(parseYtdlpError($errOut ?: $json), 500);
     }
-
-    if (!$data) {
-        jsonError('Não foi possível processar as informações do vídeo.', 500);
-    }
-
-    // Monta lista de formatos disponíveis
-    $formats = buildFormatList($data);
 
     jsonSuccess([
         'title'     => $data['title'] ?? 'Vídeo sem título',
@@ -252,7 +152,7 @@ function fetchVideoInfo(): void
         'duration'  => formatDuration($data['duration'] ?? 0),
         'platform'  => detectPlatform($url),
         'uploader'  => $data['uploader'] ?? $data['channel'] ?? '',
-        'formats'   => $formats,
+        'formats'   => buildFormatList($data),
         'url'       => $url,
     ]);
 }
@@ -264,7 +164,7 @@ function downloadVideo(): void
 {
     $url      = trim($_POST['url'] ?? '');
     $formatId = trim($_POST['format_id'] ?? 'best');
-    $type     = trim($_POST['type'] ?? 'video'); // video | audio
+    $type     = trim($_POST['type'] ?? 'video');
 
     if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
         jsonError('URL inválida.', 422);
@@ -274,14 +174,11 @@ function downloadVideo(): void
         jsonError('Plataforma não suportada.', 422);
     }
 
-    // Valida format_id — apenas alfanumérico + hífen + ponto
     if (!preg_match('/^[a-zA-Z0-9\-_.+]+$/', $formatId)) {
         jsonError('Formato inválido.', 422);
     }
 
-    $url = sanitizeUrl($url);
-
-    // Nome de arquivo único para evitar colisões
+    $url      = sanitizeUrl($url);
     $filename = 'baixarmp' . uniqid() . 'player';
     $outputTemplate = DOWNLOAD_DIR . $filename . '.%(ext)s';
 
@@ -305,102 +202,58 @@ function downloadVideo(): void
             '-o', $outputTemplate,
         ];
 
-        if ($proxy) {
-            $args = array_merge($args, ['--proxy', $proxy]);
-        }
-
-        if (COOKIES_FILE) {
-            $args = array_merge($args, ['--cookies', COOKIES_FILE]);
-        }
+        if ($proxy)      $args = array_merge($args, ['--proxy', $proxy]);
+        if (COOKIES_FILE) $args = array_merge($args, ['--cookies', COOKIES_FILE]);
 
         if ($type === 'audio') {
-            $args = array_merge($args, [
-                '-x',
-                '--audio-format', 'mp3',
-                '--audio-quality', '0',
-            ]);
+            $args = array_merge($args, ['-x', '--audio-format', 'mp3', '--audio-quality', '0']);
         } else {
-            if ($formatId === 'best') {
-                $args = array_merge($args, ['-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best']);
-            } else {
-                $args = array_merge($args, ['-f', $formatId]);
-            }
-            $args = array_merge($args, ['--merge-output-format', 'mp4']);
+            $fmt  = $formatId === 'best'
+                ? 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+                : $formatId;
+            $args = array_merge($args, ['-f', $fmt, '--merge-output-format', 'mp4']);
         }
 
         $args[] = '--';
         $args[] = $url;
 
-        $cmd    = buildCommand($args);
         $output = [];
-        exec($cmd . ' 2>&1', $output, $exitCode);
+        exec(buildCommand($args) . ' 2>&1', $output, $exitCode);
 
-        if ($exitCode === 0) {
-            break; // download ok, para de tentar
-        }
-        // limpa arquivo parcial antes de tentar próximo proxy
+        if ($exitCode === 0) break;
+
         foreach (glob(DOWNLOAD_DIR . $filename . '.*') as $f) @unlink($f);
     }
 
     if ($exitCode !== 0) {
-        $errOutput = implode("\n", $output);
-        $errMsg    = parseYtdlpError($errOutput);
-
-        // Fallback Selenium: se for erro de login no Instagram, tenta via sssinstagram
-        if (
-            str_contains($url, 'instagram.com') &&
-            isLoginRequiredError($errOutput) &&
-            PHP_OS_FAMILY !== 'Windows' &&
-            is_file(SELENIUM_SCRIPT) &&
-            is_file(SELENIUM_PYTHON)
-        ) {
-            $seleniumResult = downloadViaSelenium($url);
-            if ($seleniumResult['success']) {
-                $filePath = $seleniumResult['file'];
-                // Continua o fluxo normal de envio do arquivo
-                goto send_file;
-            }
-        }
-
-        jsonError($errMsg, 500);
+        jsonError(parseYtdlpError(implode("\n", $output)), 500);
     }
 
-    // Encontra o arquivo gerado
     $files = glob(DOWNLOAD_DIR . $filename . '.*');
-
     if (empty($files)) {
         jsonError('Arquivo não encontrado após download.', 500);
     }
 
     $filePath = $files[0];
-
-    send_file:
     $ext      = pathinfo($filePath, PATHINFO_EXTENSION);
     $mimeType = getMimeType($ext);
     $fileSize = filesize($filePath);
 
-    // Verifica tamanho máximo
     if ($fileSize > MAX_FILESIZE_MB * 1024 * 1024) {
         unlink($filePath);
         jsonError('Arquivo muito grande (limite: ' . MAX_FILESIZE_MB . 'MB).', 413);
     }
 
-    // Envia o arquivo
-    $downloadName = basename($filePath); // já está no formato baixarmp<id>player.ext
     header('Content-Type: ' . $mimeType);
-    header('Content-Disposition: attachment; filename="' . $downloadName . '"');
+    header('Content-Disposition: attachment; filename="' . basename($filePath) . '"');
     header('Content-Length: ' . $fileSize);
     header('Cache-Control: no-cache, no-store, must-revalidate');
     header('Pragma: no-cache');
     header('Expires: 0');
-    header('X-Accel-Buffering: no'); // desativa buffer do Nginx se houver
+    header('X-Accel-Buffering: no');
 
-    // Limpa buffers de saída
-    if (ob_get_level()) {
-        ob_end_clean();
-    }
+    if (ob_get_level()) ob_end_clean();
 
-    // Envia em chunks de 1MB para máxima velocidade
     $handle = fopen($filePath, 'rb');
     if ($handle) {
         while (!feof($handle)) {
@@ -410,7 +263,6 @@ function downloadVideo(): void
         fclose($handle);
     }
 
-    // Remove o arquivo após envio
     unlink($filePath);
     exit;
 }
@@ -420,104 +272,34 @@ function downloadVideo(): void
 // ─────────────────────────────────────────────
 
 /**
- * Verifica se o erro do yt-dlp é de login/autenticação requerida
- */
-function isLoginRequiredError(string $output): bool
-{
-    $patterns = ['Login required', 'login required', 'Sign in', 'authentication', 'private', 'not available'];
-    foreach ($patterns as $p) {
-        if (str_contains($output, $p)) return true;
-    }
-    return false;
-}
-
-/**
- * Fallback: baixa conteúdo privado do Instagram via Selenium + sssinstagram.com
- */
-function downloadViaSelenium(string $url): array
-{
-    // Passa HOME=/tmp para evitar problemas de permissão com www-data
-    $cmd    = 'HOME=/tmp ' . buildCommand([SELENIUM_PYTHON, SELENIUM_SCRIPT, $url, DOWNLOAD_DIR]);
-    $output = [];
-    $exit   = 0;
-
-    exec($cmd . ' 2>/dev/null', $output, $exit);
-
-    $json = implode('', $output);
-    if (empty($json)) {
-        return ['success' => false, 'error' => 'Selenium não retornou resposta'];
-    }
-
-    $result = json_decode($json, true);
-    if (!$result) {
-        return ['success' => false, 'error' => 'Resposta inválida do Selenium'];
-    }
-
-    return $result;
-}
-
-/**
- * Retorna fila de proxies para tentar em ordem.
- * Sempre começa pelo índice 0 (proxy principal) e percorre todos como fallback.
- * A rotação só acontece quando há mais de 1 proxy disponível e todos estão saudáveis.
+ * Retorna fila de proxies para tentar em ordem (proxy[0] é sempre o principal).
  */
 function buildProxyQueue(): array
 {
-    if (PROXY_URL) {
-        return [PROXY_URL];
-    }
+    if (PROXY_URL) return [PROXY_URL];
     $list = PROXY_LIST;
-    if (empty($list)) {
-        return ['']; // sem proxy
-    }
-    // Retorna a lista na ordem original — proxy[0] é sempre o principal
-    // O loop de retry no chamador tenta cada um em sequência
+    if (empty($list)) return [''];
     return array_values($list);
-}
-
-/**
- * @deprecated use buildProxyQueue() — mantido para compatibilidade
- */
-function getProxy(): string
-{
-    if (PROXY_URL) {
-        return PROXY_URL;
-    }
-    $list = PROXY_LIST;
-    if (empty($list)) {
-        return '';
-    }
-    return $list[time() % count($list)];
 }
 
 function isDomainAllowed(string $url): bool
 {
     $host = strtolower(parse_url($url, PHP_URL_HOST) ?? '');
     foreach (ALLOWED_DOMAINS as $domain) {
-        if ($host === $domain || str_ends_with($host, '.' . $domain)) {
-            return true;
-        }
+        if ($host === $domain || str_ends_with($host, '.' . $domain)) return true;
     }
     return false;
 }
 
 function sanitizeUrl(string $url): string
 {
-    // Remove fragmentos (#) mas mantém query string necessária
     $parts = parse_url($url);
     $clean = ($parts['scheme'] ?? 'https') . '://' . ($parts['host'] ?? '');
-    if (!empty($parts['path'])) {
-        $clean .= $parts['path'];
-    }
-    if (!empty($parts['query'])) {
-        $clean .= '?' . $parts['query'];
-    }
+    if (!empty($parts['path']))  $clean .= $parts['path'];
+    if (!empty($parts['query'])) $clean .= '?' . $parts['query'];
     return $clean;
 }
 
-/**
- * Constrói o comando de forma segura usando escapeshellarg em cada argumento
- */
 function buildCommand(array $args): string
 {
     return implode(' ', array_map('escapeshellarg', $args));
@@ -525,37 +307,22 @@ function buildCommand(array $args): string
 
 function buildFormatList(array $data): array
 {
-    $formats  = $data['formats'] ?? [];
-    $result   = [];
-    $seen     = [];
+    $formats = $data['formats'] ?? [];
+    $result  = [];
+    $seen    = [];
 
-    // Adiciona opção "Melhor qualidade" sempre
     $result[] = [
-        'id'       => 'best',
-        'label'    => 'Melhor qualidade (automático)',
-        'ext'      => 'mp4',
-        'type'     => 'video',
-        'quality'  => 'best',
-        'filesize' => null,
+        'id' => 'best', 'label' => 'Melhor qualidade (automático)',
+        'ext' => 'mp4', 'type' => 'video', 'quality' => 'best', 'filesize' => null,
     ];
 
-    // Formatos de vídeo com resolução
     foreach (array_reverse($formats) as $fmt) {
-        if (empty($fmt['vcodec']) || $fmt['vcodec'] === 'none') {
-            continue;
-        }
-
+        if (empty($fmt['vcodec']) || $fmt['vcodec'] === 'none') continue;
         $height = $fmt['height'] ?? 0;
-        if (!$height) {
-            continue;
-        }
-
+        if (!$height) continue;
         $label = $height . 'p';
-        if (isset($seen[$label])) {
-            continue;
-        }
+        if (isset($seen[$label])) continue;
         $seen[$label] = true;
-
         $result[] = [
             'id'       => $fmt['format_id'],
             'label'    => $label . ' — ' . strtoupper($fmt['ext'] ?? 'mp4'),
@@ -566,14 +333,9 @@ function buildFormatList(array $data): array
         ];
     }
 
-    // Opção de áudio MP3
     $result[] = [
-        'id'       => 'audio_mp3',
-        'label'    => 'Somente áudio — MP3',
-        'ext'      => 'mp3',
-        'type'     => 'audio',
-        'quality'  => 0,
-        'filesize' => null,
+        'id' => 'audio_mp3', 'label' => 'Somente áudio — MP3',
+        'ext' => 'mp3', 'type' => 'audio', 'quality' => 0, 'filesize' => null,
     ];
 
     return $result;
@@ -581,29 +343,18 @@ function buildFormatList(array $data): array
 
 function formatDuration(int $seconds): string
 {
-    if ($seconds <= 0) {
-        return '';
-    }
+    if ($seconds <= 0) return '';
     $h = intdiv($seconds, 3600);
     $m = intdiv($seconds % 3600, 60);
     $s = $seconds % 60;
-    if ($h > 0) {
-        return sprintf('%d:%02d:%02d', $h, $m, $s);
-    }
-    return sprintf('%d:%02d', $m, $s);
+    return $h > 0 ? sprintf('%d:%02d:%02d', $h, $m, $s) : sprintf('%d:%02d', $m, $s);
 }
 
 function formatFilesize(?int $bytes): ?string
 {
-    if (!$bytes) {
-        return null;
-    }
-    if ($bytes >= 1073741824) {
-        return round($bytes / 1073741824, 1) . ' GB';
-    }
-    if ($bytes >= 1048576) {
-        return round($bytes / 1048576, 1) . ' MB';
-    }
+    if (!$bytes) return null;
+    if ($bytes >= 1073741824) return round($bytes / 1073741824, 1) . ' GB';
+    if ($bytes >= 1048576)    return round($bytes / 1048576, 1) . ' MB';
     return round($bytes / 1024, 0) . ' KB';
 }
 
@@ -646,7 +397,7 @@ function parseYtdlpError(string $output): string
         return 'URL não suportada. Verifique se o link está correto.';
     }
     if (str_contains($output, 'yt-dlp: not found') || str_contains($output, 'No such file')) {
-        return 'yt-dlp não está instalado no servidor. Consulte a documentação de instalação.';
+        return 'yt-dlp não está instalado no servidor.';
     }
     return 'Não foi possível processar o vídeo. Verifique se o link está correto e tente novamente.';
 }
