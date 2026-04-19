@@ -1,0 +1,50 @@
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
+*.log
+
+# Arquivos de configuração sensíveis
+.env
+*.pem
+*.key
+*.pub
+cookies.txt
+
+# Diretório de downloads temporários
+downloads/
+temp/
+
+# Arquivos de backup
+*.bak
+*.backup
+*.old
+
+# Arquivos do editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Arquivos PHP temporários
+*.tmp
+*.cache
+
+# Arquivos de deploy específicos
+deploy/instance-id.txt
+deploy/server-ip.txt
+deploy/ami-id.txt
+deploy/sg-id.txt
+deploy/*-key*
+deploy/temp-key*
+
+# Node modules (se houver)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Arquivos de teste
+test.php
+phpinfo.php
+debug.php
