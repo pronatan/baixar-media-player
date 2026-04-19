@@ -23,7 +23,9 @@ header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 
 // Configurações
-define('YTDLP_PATH', getenv('YTDLP_PATH') ?: (PHP_OS_FAMILY === 'Windows' ? __DIR__ . '/yt-dlp.exe' : 'python3.11 -m yt_dlp'));   // caminho do binário
+define('YTDLP_PATH', getenv('YTDLP_PATH') ?: (PHP_OS_FAMILY === 'Windows' ? __DIR__ . '/yt-dlp.exe' : '/usr/local/bin/yt-dlp'));
+define('SELENIUM_PYTHON', '/opt/selenium-env/bin/python3');
+define('SELENIUM_SCRIPT', __DIR__ . '/instagram_selenium.py');
 define('DOWNLOAD_DIR', __DIR__ . '/downloads/');
 define('MAX_FILESIZE_MB', 500);
 define('CONCURRENT_FRAGMENTS', 16);
@@ -64,8 +66,55 @@ switch ($action) {
     case 'download':
         downloadVideo();
         break;
+    case 'serve':
+        serveSeleniumFile();
+        break;
     default:
         jsonError('Ação inválida.', 400);
+}
+
+// ─────────────────────────────────────────────
+// Serve arquivo já baixado pelo Selenium
+// ─────────────────────────────────────────────
+function serveSeleniumFile(): void
+{
+    $filename = basename(trim($_GET['file'] ?? ''));
+
+    // Valida: só alfanumérico + ponto + extensão segura
+    if (!preg_match('/^baixarmp[a-zA-Z0-9]+player\.(mp4|mp3|webm|m4a)$/', $filename)) {
+        jsonError('Arquivo inválido.', 400);
+    }
+
+    $filePath = DOWNLOAD_DIR . $filename;
+
+    if (!is_file($filePath)) {
+        jsonError('Arquivo não encontrado ou expirado.', 404);
+    }
+
+    $ext      = pathinfo($filePath, PATHINFO_EXTENSION);
+    $mimeType = getMimeType($ext);
+    $fileSize = filesize($filePath);
+
+    header('Content-Type: ' . $mimeType);
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Content-Length: ' . $fileSize);
+    header('Cache-Control: no-cache, no-store, must-revalidate');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    if (ob_get_level()) ob_end_clean();
+
+    $handle = fopen($filePath, 'rb');
+    if ($handle) {
+        while (!feof($handle)) {
+            echo fread($handle, BUFFER_SIZE);
+            flush();
+        }
+        fclose($handle);
+    }
+
+    unlink($filePath);
+    exit;
 }
 
 // ─────────────────────────────────────────────
@@ -152,6 +201,41 @@ function fetchVideoInfo(): void
 
     if (!$data) {
         $errMsg = parseYtdlpError($errOut ?: $json);
+
+        // Fallback Selenium para Instagram privado
+        if (
+            str_contains($url, 'instagram.com') &&
+            isLoginRequiredError($errOut ?: $json) &&
+            PHP_OS_FAMILY !== 'Windows' &&
+            is_file(SELENIUM_SCRIPT) &&
+            is_file(SELENIUM_PYTHON)
+        ) {
+            // Para fetch, o Selenium baixa o arquivo e retorna info básica
+            $seleniumResult = downloadViaSelenium($url);
+            if ($seleniumResult['success'] && !empty($seleniumResult['file'])) {
+                $filePath = $seleniumResult['file'];
+                $fileSize = filesize($filePath);
+                // Retorna info básica — o arquivo já está baixado
+                jsonSuccess([
+                    'title'     => 'Vídeo do Instagram (privado)',
+                    'thumbnail' => '',
+                    'duration'  => '',
+                    'platform'  => 'Instagram',
+                    'uploader'  => '',
+                    'formats'   => [[
+                        'id'       => 'selenium_direct',
+                        'label'    => 'Melhor qualidade disponível',
+                        'ext'      => 'mp4',
+                        'type'     => 'video',
+                        'quality'  => 'best',
+                        'filesize' => round($fileSize / 1048576, 1) . ' MB',
+                    ]],
+                    'url'       => $url,
+                    'selenium_file' => basename($filePath), // arquivo já baixado
+                ]);
+            }
+        }
+
         jsonError($errMsg, 500);
     }
 
@@ -259,7 +343,25 @@ function downloadVideo(): void
     }
 
     if ($exitCode !== 0) {
-        $errMsg = parseYtdlpError(implode("\n", $output));
+        $errOutput = implode("\n", $output);
+        $errMsg    = parseYtdlpError($errOutput);
+
+        // Fallback Selenium: se for erro de login no Instagram, tenta via sssinstagram
+        if (
+            str_contains($url, 'instagram.com') &&
+            isLoginRequiredError($errOutput) &&
+            PHP_OS_FAMILY !== 'Windows' &&
+            is_file(SELENIUM_SCRIPT) &&
+            is_file(SELENIUM_PYTHON)
+        ) {
+            $seleniumResult = downloadViaSelenium($url);
+            if ($seleniumResult['success']) {
+                $filePath = $seleniumResult['file'];
+                // Continua o fluxo normal de envio do arquivo
+                goto send_file;
+            }
+        }
+
         jsonError($errMsg, 500);
     }
 
@@ -271,6 +373,8 @@ function downloadVideo(): void
     }
 
     $filePath = $files[0];
+
+    send_file:
     $ext      = pathinfo($filePath, PATHINFO_EXTENSION);
     $mimeType = getMimeType($ext);
     $fileSize = filesize($filePath);
@@ -314,6 +418,43 @@ function downloadVideo(): void
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
+
+/**
+ * Verifica se o erro do yt-dlp é de login/autenticação requerida
+ */
+function isLoginRequiredError(string $output): bool
+{
+    $patterns = ['Login required', 'login required', 'Sign in', 'authentication', 'private', 'not available'];
+    foreach ($patterns as $p) {
+        if (str_contains($output, $p)) return true;
+    }
+    return false;
+}
+
+/**
+ * Fallback: baixa conteúdo privado do Instagram via Selenium + sssinstagram.com
+ */
+function downloadViaSelenium(string $url): array
+{
+    // Passa HOME=/tmp para evitar problemas de permissão com www-data
+    $cmd    = 'HOME=/tmp ' . buildCommand([SELENIUM_PYTHON, SELENIUM_SCRIPT, $url, DOWNLOAD_DIR]);
+    $output = [];
+    $exit   = 0;
+
+    exec($cmd . ' 2>/dev/null', $output, $exit);
+
+    $json = implode('', $output);
+    if (empty($json)) {
+        return ['success' => false, 'error' => 'Selenium não retornou resposta'];
+    }
+
+    $result = json_decode($json, true);
+    if (!$result) {
+        return ['success' => false, 'error' => 'Resposta inválida do Selenium'];
+    }
+
+    return $result;
+}
 
 /**
  * Retorna fila de proxies para tentar em ordem.
