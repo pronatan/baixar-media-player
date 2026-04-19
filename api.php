@@ -1,4 +1,4 @@
-<?php
+ <?php
 /**
  * api.php — Endpoint AJAX para buscar informações e baixar vídeos
  * Requer: yt-dlp instalado no servidor (https://github.com/yt-dlp/yt-dlp)
@@ -23,13 +23,10 @@ define('BUFFER_SIZE', 1048576);
 define('PROXY_URL', getenv('YTDLP_PROXY') ?: '');
 
 // Lista de proxies para rotação (se PROXY_URL estiver vazio, usa esta lista)
-// Formato: ['http://user:pass@host:porta', ...]
-define('PROXY_LIST', [
-    'http://ekfjmbsm:shn3n2ezsqbc@31.59.20.176:6754',
-    'http://ekfjmbsm:shn3n2ezsqbc@198.23.239.134:6540',
-    'http://ekfjmbsm:shn3n2ezsqbc@45.38.107.97:6014',
-    'http://ekfjmbsm:shn3n2ezsqbc@107.172.163.27:6543',
-]);
+// Configure via variável de ambiente YTDLP_PROXY_LIST como JSON:
+// ["http://user:pass@host:porta", ...]
+$_proxy_list_raw = getenv('YTDLP_PROXY_LIST');
+define('PROXY_LIST', $_proxy_list_raw ? json_decode($_proxy_list_raw, true) : []);
 
 // Arquivo de cookies exportado do navegador (resolve Instagram/TikTok com login)
 define('COOKIES_FILE', is_file(__DIR__ . '/cookies.txt') ? __DIR__ . '/cookies.txt' : '');
@@ -157,7 +154,7 @@ function downloadVideo(): void
     $url = sanitizeUrl($url);
 
     // Nome de arquivo único para evitar colisões
-    $filename = uniqid('vd_', true);
+    $filename = 'baixarmp' . uniqid() . 'player';
     $outputTemplate = DOWNLOAD_DIR . $filename . '.%(ext)s';
 
     $proxy = getProxy();
@@ -233,8 +230,9 @@ function downloadVideo(): void
     }
 
     // Envia o arquivo
+    $downloadName = basename($filePath); // já está no formato baixarmp<id>player.ext
     header('Content-Type: ' . $mimeType);
-    header('Content-Disposition: attachment; filename="videodown_' . time() . '.' . $ext . '"');
+    header('Content-Disposition: attachment; filename="' . $downloadName . '"');
     header('Content-Length: ' . $fileSize);
     header('Cache-Control: no-cache, no-store, must-revalidate');
     header('Pragma: no-cache');
