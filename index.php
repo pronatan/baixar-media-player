@@ -81,7 +81,7 @@
                         </svg>                        <input
                             type="url"
                             id="videoUrl"
-                            placeholder="Cole o link do vídeo aqui..."
+                            placeholder="Cole o link do vídeo aqui"
                             autocomplete="off"
                             spellcheck="false"
                         >
