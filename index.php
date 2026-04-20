@@ -3,10 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Baixar Media Player — TikTok, Instagram, Facebook e mais</title>
+
+    <!-- Primary SEO -->
+    <title>Baixar Media Player | Baixe Vídeos do TikTok, Instagram, YouTube e Facebook</title>
+    <meta name="description" content="Baixe vídeos do TikTok, Instagram, YouTube, Facebook e Twitter/X gratuitamente. Sem cadastro, sem aplicativo. Suporta Reels, Stories, Shorts e muito mais.">
+    <meta name="keywords" content="baixar vídeo tiktok, baixar reels instagram, baixar vídeo youtube, baixar vídeo facebook, baixar shorts, downloader de vídeo, salvar vídeo online">
+    <meta name="author" content="Baixar Media Player">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://baixarmp.duckdns.org/">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://baixarmp.duckdns.org/">
+    <meta property="og:title" content="Baixar Media Player | Baixe Vídeos Grátis do TikTok, Instagram e YouTube">
+    <meta property="og:description" content="Baixe vídeos do TikTok, Instagram, YouTube, Facebook e Twitter/X gratuitamente. Sem cadastro, sem aplicativo.">
+    <meta property="og:image" content="https://baixarmp.duckdns.org/assets/logo.png">
+    <meta property="og:locale" content="pt_BR">
+    <meta property="og:site_name" content="Baixar Media Player">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://baixarmp.duckdns.org/">
+    <meta name="twitter:title" content="Baixar Media Player | Baixe Vídeos Grátis">
+    <meta name="twitter:description" content="Baixe vídeos do TikTok, Instagram, YouTube, Facebook e Twitter/X gratuitamente. Sem cadastro, sem aplicativo.">
+    <meta name="twitter:image" content="https://baixarmp.duckdns.org/assets/logo.png">
+
+    <!-- Schema.org Structured Data -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Baixar Media Player",
+        "url": "https://baixarmp.duckdns.org/",
+        "description": "Baixe vídeos do TikTok, Instagram, YouTube, Facebook e Twitter/X gratuitamente.",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "All",
+        "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "BRL"
+        }
+    }
+    </script>
+
+    <!-- Favicon -->
     <link rel="icon" type="image/png" href="assets/favicon.png">
+    <link rel="apple-touch-icon" href="assets/logo.png">
+
+    <!-- Styles -->
     <link rel="stylesheet" href="assets/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
